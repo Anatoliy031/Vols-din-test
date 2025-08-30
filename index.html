@@ -1730,90 +1730,144 @@ ${planfactHTML}
     setTimeout(()=>document.getElementById("exportStatus").style.display = "none", 3000);
   }
 
-  /* ==================== Экспорт презентации в HTML (исправлено: отдельные слайды + графики) ==================== */
+  /* ==================== ВСПОМОГАТЕЛЬНОЕ ДЛЯ СЛАЙДА 1 (донаты по План-Факт) ==================== */
+  function parsePlanFactMetricsFromHTML(pfHTML){
+    const res = { podves:null, revenue:null, hasData:false };
+    if(!pfHTML) return res;
+    const tmp = document.createElement("div");
+    tmp.innerHTML = pfHTML;
+    const table = tmp.querySelector("table");
+    if(!table) return res;
+
+    const rows = Array.from(table.querySelectorAll("tr"));
+    if(!rows.length) return res;
+
+    // Определяем индексы колонок План/Факт (если есть в заголовке)
+    let colPlan = -1, colFact = -1;
+    const headCells = Array.from(rows[0].querySelectorAll("th,td")).map(c=>c.textContent.trim().toLowerCase());
+    headCells.forEach((t,i)=>{
+      if(colPlan===-1 && /план/.test(t)) colPlan = i;
+      if(colFact===-1 && /факт/.test(t)) colFact = i;
+    });
+
+    function pickNumbers(cells){
+      const nums = [];
+      for(const c of cells){
+        const txt = c.textContent.replace(/\u00A0|\u202F/g,' ').trim();
+        const matches = txt.match(/-?\d{1,3}(?:[\s\u00A0\u202F]?\d{3})*(?:[.,]\d+)?%?/g);
+        if(matches){
+          for(const m of matches){
+            const isPct = /%/.test(m);
+            const val = Number(m.replace('%','').replace(/\s/g,'').replace(',','.'));
+            if(!isNaN(val)) nums.push({val, isPct});
+          }
+        }
+      }
+      return nums;
+    }
+
+    function rowToPlanFact(row){
+      const cells = Array.from(row.querySelectorAll("td,th"));
+      let plan=null, fact=null, planPct=false, factPct=false;
+      if(colPlan>=0 && colPlan<cells.length) {
+        const m = pickNumbers([cells[colPlan]])[0];
+        if(m){ plan = m.val; planPct = !!m.isPct; }
+      }
+      if(colFact>=0 && colFact<cells.length) {
+        const m = pickNumbers([cells[colFact]])[0];
+        if(m){ fact = m.val; factPct = !!m.isPct; }
+      }
+      if(plan===null || fact===null){
+        const nums = pickNumbers(cells);
+        if(nums.length>=2){
+          if(plan===null){ plan = nums[0].val; planPct = !!nums[0].isPct; }
+          if(fact===null){ fact = nums[1].val; factPct = !!nums[1].isPct; }
+        }
+      }
+      if(plan===null || fact===null) return null;
+      return {plan, fact, planPct, factPct};
+    }
+
+    function findByKeys(keys){
+      const re = new RegExp(keys.join("|"), "i");
+      for(const r of rows){
+        const txt = r.textContent || "";
+        if(re.test(txt)) return rowToPlanFact(r);
+      }
+      return null;
+    }
+
+    const podves = findByKeys(["доля\\s*подвеса","подвес"]);
+    const revenue = findByKeys(["выручк"]);
+
+    if(podves){ res.podves = podves; res.hasData = true; }
+    if(revenue){ res.revenue = revenue; res.hasData = true; }
+
+    return res;
+  }
+
+  function donutImage(percent, centerText, subText){
+    const size = 220, cx=size/2, cy=size/2, r=85, thickness=18;
+    const canvas = document.createElement("canvas");
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0,0,size,size);
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI*2);
+    ctx.strokeStyle = "#e6edf6";
+    ctx.lineWidth = thickness;
+    ctx.stroke();
+
+    const ang = Math.max(0, Math.min(100, percent)) / 100 * Math.PI*2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, -Math.PI/2, -Math.PI/2 + ang, false);
+    ctx.strokeStyle = varGet("--rs-blue") || "#0033A0";
+    ctx.lineCap = "round";
+    ctx.lineWidth = thickness;
+    ctx.stroke();
+
+    ctx.fillStyle = "#0b1a2b";
+    ctx.font = "700 28px Inter,Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${Math.round(percent)}%`, cx, cy-6);
+
+    ctx.fillStyle = "#5f6b7a";
+    ctx.font = "12px Inter,Arial";
+    ctx.fillText(centerText, cx, cy+18);
+
+    ctx.font = "11px Inter,Arial";
+    ctx.fillText(subText, cx, cy+36);
+
+    return canvas.toDataURL("image/png");
+  }
+
+  function donutPlaceholder(label){
+    const size=220, canvas=document.createElement("canvas");
+    canvas.width=size; canvas.height=size;
+    const ctx=canvas.getContext("2d");
+    ctx.fillStyle="#fff"; ctx.fillRect(0,0,size,size);
+    ctx.fillStyle="#e6edf6";
+    ctx.beginPath(); ctx.arc(size/2,size/2,85,0,Math.PI*2); ctx.lineWidth=18; ctx.stroke();
+    ctx.fillStyle="#5f6b7a"; ctx.textAlign="center";
+    ctx.font="700 18px Inter,Arial"; ctx.fillText("нет данных", size/2, size/2-6);
+    ctx.font="12px Inter,Arial"; ctx.fillText(label, size/2, size/2+18);
+    return canvas.toDataURL("image/png");
+  }
+
+  /* ==================== Экспорт презентации в HTML (только презентация) ==================== */
   function exportPresHTML(){
     if(!DATA) return alert("Сначала проанализируйте отчёты.");
     const {curr, prev, dyn} = DATA;
 
-    /* 1) снимаем изображения с уже отрисованных графиков страницы (без анимации) */
-    try{
-      if(chartBranches) chartBranches.update('none');
-      if(chartBranchesS3) chartBranchesS3.update('none');
-      if(chartBranchesS4) chartBranchesS4.update('none');
-    }catch(e){}
-    const imgS2 = chartBranches ? chartBranches.toBase64Image() : document.getElementById("chartBranches").toDataURL("image/png", 1.0);
-    const imgS3 = chartBranchesS3 ? chartBranchesS3.toBase64Image() : document.getElementById("chartBranchesS3").toDataURL("image/png", 1.0);
-    const imgS4 = chartBranchesS4 ? chartBranchesS4.toBase64Image() : document.getElementById("chartBranchesS4").toDataURL("image/png", 1.0);
+    // Берем изображения с уже отрисованных на странице графиков (Слайды 2–4)
+    const imgS2 = document.getElementById("chartBranches").toDataURL("image/png", 1.0);
+    const imgS3 = document.getElementById("chartBranchesS3").toDataURL("image/png", 1.0);
+    const imgS4 = document.getElementById("chartBranchesS4").toDataURL("image/png", 1.0);
 
-    /* 2) Вспомогательная функция: строим оффскрин-чарты для слайдов со статусами */
-    const mkChartImage = (cfg, width=1100, height=600) => {
-      const cnv = document.createElement("canvas");
-      cnv.width = width; cnv.height = height;
-      const ctx = cnv.getContext("2d");
-      // принудительно отключаем анимацию и авто-резайз
-      cfg.options = Object.assign({}, cfg.options || {}, {
-        responsive:false,
-        maintainAspectRatio:false,
-        animation:false,
-        events:[]
-      });
-      const chart = new Chart(ctx, cfg);
-      chart.update('none');
-      const url = chart.toBase64Image();
-      chart.destroy();
-      return url;
-    };
-
-    /* 3) Данные для графиков статусов */
-    // 3.1 По филиалам: суммарная Δ (все статусы) — горизонтальный бар
-    const perBranchDelta = dyn.s2BranchStages.map(row=>{
-      const sumD = STATUS_KEYS.reduce((s,k)=>s + (row.by[k]?.d||0), 0);
-      return {b: row.b, d: sumD};
-    }).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
-    const labelsBranch = perBranchDelta.map(x=>x.b);
-    const dataBranch = perBranchDelta.map(x=>x.d);
-    const colorsBranch = dataBranch.map(v=> v>0 ? varGet("--success") : (v<0 ? varGet("--danger") : "#94A3B8"));
-    const borderBranch = dataBranch.map(v=> v>0 ? varGet("--success-light") : (v<0 ? varGet("--danger-light") : "#CBD5E1"));
-    const imgStagesByBranch = mkChartImage({
-      type:"bar",
-      data:{ labels: labelsBranch, datasets:[{
-        label:"Суммарная Δ по статусам",
-        data: dataBranch,
-        backgroundColor: colorsBranch,
-        borderColor: borderBranch,
-        borderWidth:1
-      }]},
-      options:{
-        indexAxis:'y',
-        plugins:{ legend:{display:false} },
-        scales:{
-          x:{ ticks:{precision:0} },
-          y:{ ticks:{ autoSkip:false, font:{size:11} } }
-        }
-      }
-    }, 1100, 900);
-
-    // 3.2 Итоги по статусам: Δ по каждому статусу — вертикальный бар
-    const labelsStatus = dyn.stagesS2.map(r=>r.stage);
-    const dataStatus = dyn.stagesS2.map(r=>r.d);
-    const colorStatus = dataStatus.map(v=> v>0 ? varGet("--success") : (v<0 ? varGet("--danger") : "#94A3B8"));
-    const borderStatus = dataStatus.map(v=> v>0 ? varGet("--success-light") : (v<0 ? varGet("--danger-light") : "#CBD5E1"));
-    const imgStagesTotals = mkChartImage({
-      type:"bar",
-      data:{ labels: labelsStatus, datasets:[{
-        label:"Δ по статусам (итого)",
-        data: dataStatus,
-        backgroundColor: colorStatus,
-        borderColor: borderStatus,
-        borderWidth:1
-      }]},
-      options:{
-        plugins:{ legend:{display:false} },
-        scales:{ x:{ ticks:{autoSkip:false, maxRotation:30, minRotation:0} }, y:{ beginAtZero:true, ticks:{precision:0} } }
-      }
-    }, 1100, 600);
-
-    /* 4) Остальные данные для слайдов */
     const planfactHTML = document.getElementById("presPlanFactInner").innerHTML || "";
 
     // Сортировка для презентации (А→Я, ru)
@@ -1829,15 +1883,49 @@ ${planfactHTML}
     const tblS4HTML_sorted = presTableHTML("Динамика по ПАО «Ростелеком»", s4Sorted, ["sumPrevS4","sumCurrS4","sumDeltaS4"]);
 
     const s2BranchStagesSorted = [...dyn.s2BranchStages].sort((a,b)=>collator.compare(a.b,b.b));
-    const s2MatrixHTML = stageMatrixHTML("Динамика по статусам (Δ)", s2BranchStagesSorted);
-    const s2TotalsHTML = stageTotalsHTML("Итоги по статусам", dyn.stagesS2);
+
+    // ========== НОВОЕ: оффскрин-графики для слайдов со статусами ==========
+    // Чарт для слайда 5: суммарная Δ по статусам для каждого филиала (в том же порядке, что матрица)
+    const perBranchDelta = s2BranchStagesSorted.map(row => ({
+      b: row.b,
+      d: STATUS_KEYS.reduce((s,k)=> s + (row.by[k]?.d || 0), 0)
+    }));
+    const labelsS5 = perBranchDelta.map(x=>x.b);
+    const dataS5   = perBranchDelta.map(x=>x.d);
+    const imgS5 = mkChartImage({
+      type:"bar",
+      data:{labels:labelsS5, datasets:[{
+        label:"Δ по статусам (сумма)",
+        data:dataS5,
+        backgroundColor: dataS5.map(v=> v>0? varGet("--success") : varGet("--danger")),
+        borderColor: dataS5.map(v=> v>0? varGet("--success-light") : varGet("--danger-light")),
+        borderWidth:1
+      }]},
+      options: chartOpts()
+    }, 1100, 600);
+
+    // Чарт для слайда 6: «Итого по статусам» (пред. vs тек.) по каждой стадии
+    const labelsS6 = (dyn.stagesS2||[]).map(x=>x.stage);
+    const prevS6   = (dyn.stagesS2||[]).map(x=>x.p);
+    const currS6   = (dyn.stagesS2||[]).map(x=>x.c);
+    const imgS6 = mkChartImage({
+      type:"bar",
+      data:{labels:labelsS6, datasets:[
+        {label:"Пред. неделя", data:prevS6, backgroundColor:"#CBD5E1", borderColor:"#94A3B8", borderWidth:1},
+        {label:"Тек. неделя",  data:currS6, backgroundColor:varGet("--rs-blue"), borderColor:varGet("--rs-blue-600"), borderWidth:1}
+      ]},
+      options: chartOpts()
+    }, 1100, 600);
+
+    // HTML для таблиц статусов — разобьём на два отдельных блока (матрица и итоги)
+    const stagesMatrixHTML_sorted = stageMatrixHTML("Динамика по статусам (Δ)", s2BranchStagesSorted);
+    const stagesTotalsHTML_block  = stageTotalsHTML("Итоги по статусам", dyn.stagesS2);
 
     const eff = (curr.p1.totals.legalized + curr.p1.totals.dismantled_ytd) - (prev.p1.totals.legalized + prev.p1.totals.dismantled_ytd);
     const rtkShare = curr.p1.totals.in_work_total ? (curr.p1.totals.rtk_in_work / curr.p1.totals.in_work_total * 100) : 0;
     const sign = v=> v>0?"+":"";
     const compactKPIs = `Ключевые показатели: В работе всего — ${fmt(curr.p1.totals.in_work_total)} (${sign(dyn.in_work_total)}${fmt(dyn.in_work_total)}); Выявлено — ${fmt(dyn.found_week)}; Закрыто — ${fmt(eff)}; РТК — ${fmt(curr.p1.totals.rtk_in_work)} (${sign(dyn.rtk_in_work)}${fmt(dyn.rtk_in_work)}, ${rtkShare.toFixed(1)}%).`;
 
-    /* 5) Шаблон презентации: 6 слайдов, 5–6 слайд разделены + графики */
     const presHTML = `<!DOCTYPE html>
 <html>
 <head>
@@ -1987,6 +2075,10 @@ ${planfactHTML}
       background:#f1f5f9;
     }
     
+    tr:hover{
+      background:#e0e7ff;
+    }
+    
     tfoot td{
       font-weight:800;
       background:#1e293b;
@@ -2034,7 +2126,64 @@ ${planfactHTML}
       border-radius:8px;
       opacity:0.1;
     }
-
+    
+    /* Современные KPI блоки */
+    .kpi-grid{
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:20px;
+      margin-top:40px;
+    }
+    
+    .kpi-card{
+      background:linear-gradient(135deg, #f8fafd 0%, #e7eef7 100%);
+      border:2px solid #e2e8f0;
+      border-radius:16px;
+      padding:24px;
+      text-align:center;
+      position:relative;
+      overflow:hidden;
+    }
+    
+    .kpi-card::before{
+      content:'';
+      position:absolute;
+      top:-50%;
+      right:-50%;
+      width:100%;
+      height:100%;
+      background:#0033A0;
+      opacity:0.05;
+      border-radius:50%;
+    }
+    
+    .kpi-label{
+      font-size:12px;
+      font-weight:600;
+      color:#64748b;
+      text-transform:uppercase;
+      letter-spacing:0.05em;
+      margin-bottom:8px;
+    }
+    
+    .kpi-value{
+      font-size:36px;
+      font-weight:800;
+      color:#0033A0;
+      line-height:1;
+      margin-bottom:8px;
+    }
+    
+    .kpi-delta{
+      font-size:18px;
+      font-weight:600;
+    }
+    
+    .kpi-delta.positive{color:#059669}
+    .kpi-delta.negative{color:#dc2626}
+    .kpi-delta.neutral{color:#64748b}
+    
+    /* Матрица статусов */
     .status-matrix-container{
       max-height:560px;
       overflow:auto;
@@ -2043,229 +2192,22 @@ ${planfactHTML}
       background:#fff;
     }
     
-    @media print{
-      body{background:#fff}
-      .slides-container{padding:0;gap:0}
-      .slide{box-shadow:none;margin-bottom:0;page-break-after:always;page-break-inside:avoid}
-      .slide-no{background:#333}
-      .slide div[style*="overflow:auto"]{overflow:visible !important;max-height:none !important}
+    .status-matrix{
+      font-size:11px !important;
     }
-  </style>
-</head>
-<body>
-  <div class="slides-container">
-    <!-- Слайд 1: Заголовок и План-Факт -->
-    <div class="slide">
-      <div class="rosseti-logo"></div>
-      <h1>Выполнение плановых показателей БП<br>по размещению ВОЛС на ВЛ</h1>
-      <div class="subline">АО «Россети Кубань» • Период: ${prev.date} — ${curr.date}</div>
-      
-      <div style="margin-top:40px">
-        ${planfactHTML}
-      </div>
-      
-      <div class="legend">${compactKPIs}</div>
-      <div class="slide-no">1</div>
-    </div>
-
-    <!-- Слайд 2: Динамика по филиалам (всего) -->
-    <div class="slide">
-      <div class="rosseti-logo"></div>
-      <h2>Динамика выявления бездоговорного размещения ВОЛС<br>в разрезе филиалов ЭС (итого)</h2>
-      <div class="grid2">
-        <div class="imgbox">
-          <img src="${imgS2}" alt="График по филиалам (всего)"/>
-        </div>
-        <div class="panel">
-          ${tblS2HTML_sorted}
-        </div>
-      </div>
-      <div class="slide-no">2</div>
-    </div>
-
-    <!-- Слайд 3: Приказ №425 -->
-    <div class="slide">
-      <div class="rosseti-logo"></div>
-      <h2>Динамика по Приказу №425</h2>
-      <div class="subline">Выполнение показателей в разрезе филиалов</div>
-      <div class="grid2">
-        <div class="imgbox">
-          <img src="${imgS3}" alt="График по Приказу 425"/>
-        </div>
-        <div class="panel">
-          ${tblS3HTML_sorted}
-        </div>
-      </div>
-      <div class="slide-no">3</div>
-    </div>
-
-    <!-- Слайд 4: ПАО «Ростелеком» -->
-    <div class="slide">
-      <div class="rosseti-logo"></div>
-      <h2>Динамика по ПАО «Ростелеком»</h2>
-      <div class="subline">Детализация по филиалам электрических сетей</div>
-      <div class="grid2">
-        <div class="imgbox">
-          <img src="${imgS4}" alt="График по ПАО Ростелеком"/>
-        </div>
-        <div class="panel">
-          ${tblS4HTML_sorted}
-        </div>
-      </div>
-      <div class="slide-no">4</div>
-    </div>
-
-    <!-- Слайд 5: Динамика по статусам в разрезе филиалов (матрица + график) -->
-    <div class="slide">
-      <div class="rosseti-logo"></div>
-      <h2 style="margin-bottom:10px">Динамика по статусам в разрезе филиалов</h2>
-      <div class="subline">Суммарная Δ по статусам для каждого филиала (слева) и матрица распределения (справа)</div>
-      <div class="grid2">
-        <div class="imgbox">
-          <img src="${imgStagesByBranch}" alt="Суммарная Δ по статусам (по филиалам)"/>
-        </div>
-        <div class="panel status-matrix-container">
-          ${s2MatrixHTML}
-        </div>
-      </div>
-      <div class="slide-no">5</div>
-    </div>
-
-    <!-- Слайд 6: Итоги по статусам (только итоги + график) -->
-    <div class="slide">
-      <div class="rosseti-logo"></div>
-      <h2 style="margin-bottom:10px">Итоги по статусам (Δ)</h2>
-      <div class="subline">Суммарная динамика по каждому статусу</div>
-      <div class="grid2">
-        <div class="imgbox">
-          <img src="${imgStagesTotals}" alt="Δ по статусам (итого)"/>
-        </div>
-        <div class="panel">
-          ${s2TotalsHTML}
-        </div>
-      </div>
-      <div class="slide-no">6</div>
-    </div>
-  </div>
-</body>
-</html>`;
-
-    const blob = new Blob([presHTML], {type: 'text/html; charset=utf-8'});
-    triggerDownload(blob, `Презентация_ВОЛС_${curr.date.replace(/\./g,'-')}.html`);
-    document.getElementById("exportStatus").textContent = "✅ HTML презентация сохранена";
-    document.getElementById("exportStatus").style.display = "inline-block";
-    setTimeout(()=>document.getElementById("exportStatus").style.display = "none", 3000);
-  }
-
-  /* ==================== Вспомогательные ==================== */
-  function triggerDownload(blob, filename){
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename; document.body.appendChild(a); a.click();
-    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
-  }
-  function varGet(name){
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#0033A0";
-  }
-
-  /* ==================== Инициализация ==================== */
-  let DATA = null;
-
-  document.getElementById("btnParse").addEventListener("click", async () => {
-    const fPrev = document.getElementById("filePrev").files[0];
-    const fCurr = document.getElementById("fileCurr").files[0];
-    if(!fPrev || !fCurr){ 
-      document.getElementById("errorMsg").textContent = "Загрузите оба PDF: предыдущий и текущий."; 
-      document.getElementById("errorMsg").style.display = "inline-block";
-      return; 
-    }
-
-    try{
-      document.getElementById("loadingMsg").style.display = "inline-flex";
-      document.getElementById("errorMsg").textContent = "";
-      document.getElementById("errorMsg").style.display = "none";
-
-      const [pPrev, pCurr] = await Promise.all([pdfToPages(fPrev), pdfToPages(fCurr)]);
-      const prev = parseReportByPages(pPrev);
-      const curr = parseReportByPages(pCurr);
-      const dyn = computeDynamics(curr, prev);
-      DATA = {prev, curr, dyn};
-
-      document.getElementById("dates").textContent = `📅 Предыдущий: ${prev.date} · Текущий: ${curr.date}`;
-      renderKpis(curr, prev, dyn);
-      renderBranchesTable(dyn.branchRows, "#tblBranches tbody", "sumPrev", "sumCurr", "sumDelta");
-      renderBranchesTable(dyn.branchRowsS3, "#tblBranchesS3 tbody", "sumPrevS3", "sumCurrS3", "sumDeltaS3");
-      renderBranchesTable(dyn.branchRowsS4, "#tblBranchesS4 tbody", "sumPrevS4", "sumCurrS4", "sumDeltaS4");
-      renderCharts(curr, prev, dyn);
-      renderStagesTables(dyn);
-      buildPresentationHTML(curr, prev, dyn);
-      document.getElementById("briefDates").textContent = `Предыдущий: ${prev.date} · Текущий: ${curr.date}`;
-      buildSummaryBlocks(curr, prev, dyn);
-      await injectPlanFactHTML();
-
-      document.getElementById("loadingMsg").style.display = "none";
-      
-      // Анимация появления карточек
-      document.querySelectorAll('.card').forEach((card, i) => {
-        card.style.opacity = '0';
-        card.style.transform = 'translateY(20px)';
-        setTimeout(() => {
-          card.style.transition = 'all 0.5s ease-out';
-          card.style.opacity = '1';
-          card.style.transform = 'translateY(0)';
-        }, i * 100);
-      });
-      
-    }catch(e){
-      console.error(e);
-      document.getElementById("loadingMsg").style.display = "none";
-      document.getElementById("errorMsg").textContent = "❌ Ошибка разбора PDF. Проверьте формат отчётов.";
-      document.getElementById("errorMsg").style.display = "inline-block";
-    }
-  });
-
-  document.getElementById("exportPresPDF").addEventListener("click", async () => {
-    if(!DATA) return alert("Сначала проанализируйте отчёты.");
-    await exportPresPDF();
-  });
-  document.getElementById("exportBriefPDF").addEventListener("click", async () => {
-    if(!DATA) return alert("Сначала проанализируйте отчёты.");
-    await exportBriefPDF();
-  });
-  document.getElementById("exportWordHTML").addEventListener("click", () => {
-    exportWordHTML();
-  });
-  document.getElementById("exportPresHTML").addEventListener("click", () => {
-    exportPresHTML();
-  });
-
-  /* Компактный режим */
-  document.getElementById("btnCompact").addEventListener("click", ()=>{
-    document.body.classList.toggle("compact");
-    const btn = document.getElementById("btnCompact");
-    if(document.body.classList.contains("compact")){
-      btn.innerHTML = "🔍 Обычный";
-    } else {
-      btn.innerHTML = "⚡ Компакт";
-    }
-  });
-  
-  /* Подсветка активной секции при прокрутке */
-  window.addEventListener('scroll', () => {
-    const sections = document.querySelectorAll('.card');
-    const scrollPos = window.scrollY + 100;
     
-    sections.forEach(section => {
-      const top = section.offsetTop;
-      const height = section.offsetHeight;
-      
-      if (scrollPos >= top && scrollPos < top + height) {
-        section.style.borderColor = 'var(--rs-accent)';
-      } else {
-        section.style.borderColor = 'var(--border-light)';
-      }
-    });
-  });
-  </script>
-</body>
-</html>
+    .status-matrix th,
+    .status-matrix td{
+      padding:6px 8px !important;
+      font-size:11px !important;
+    }
+    
+    .status-matrix th{
+      position:sticky;
+      top:0;
+      z-index:10;
+      background:#0033A0 !important;
+    }
+    
+    /* Цвета для значений в матрице статусов */
+   
