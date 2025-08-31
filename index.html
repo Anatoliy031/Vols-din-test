@@ -1863,7 +1863,6 @@ ${planfactHTML}
     if(!DATA) return alert("Сначала проанализируйте отчёты.");
     const {curr, prev, dyn} = DATA;
 
-    // Берем изображения с уже отрисованных на странице графиков (Слайды 2–4)
     const imgS2 = document.getElementById("chartBranches").toDataURL("image/png", 1.0);
     const imgS3 = document.getElementById("chartBranchesS3").toDataURL("image/png", 1.0);
     const imgS4 = document.getElementById("chartBranchesS4").toDataURL("image/png", 1.0);
@@ -1883,43 +1882,59 @@ ${planfactHTML}
     const tblS4HTML_sorted = presTableHTML("Динамика по ПАО «Ростелеком»", s4Sorted, ["sumPrevS4","sumCurrS4","sumDeltaS4"]);
 
     const s2BranchStagesSorted = [...dyn.s2BranchStages].sort((a,b)=>collator.compare(a.b,b.b));
+    
+    // Компактная версия матрицы для 5-го слайда
+    const compactStageMatrix = (branchStages) => {
+      const cols = STATUS_KEYS;
+      const head = cols.map(k=>`<th style="text-align:center;padding:2px;font-weight:600;color:#fff;font-size:9px;white-space:nowrap;background:#0033A0;border:1px solid #002680">${SHORT_STAGE_TITLE(k)}</th>`).join("");
+      let totals = {}; cols.forEach(k=>totals[k]=0);
 
-    // ========== НОВОЕ: оффскрин-графики для слайдов со статусами ==========
-    // Чарт для слайда 5: суммарная Δ по статусам для каждого филиала (в том же порядке, что матрица)
-    const perBranchDelta = s2BranchStagesSorted.map(row => ({
-      b: row.b,
-      d: STATUS_KEYS.reduce((s,k)=> s + (row.by[k]?.d || 0), 0)
-    }));
-    const labelsS5 = perBranchDelta.map(x=>x.b);
-    const dataS5   = perBranchDelta.map(x=>x.d);
-    const imgS5 = mkChartImage({
-      type:"bar",
-      data:{labels:labelsS5, datasets:[{
-        label:"Δ по статусам (сумма)",
-        data:dataS5,
-        backgroundColor: dataS5.map(v=> v>0? varGet("--success") : varGet("--danger")),
-        borderColor: dataS5.map(v=> v>0? varGet("--success-light") : varGet("--danger-light")),
-        borderWidth:1
-      }]},
-      options: chartOpts()
-    }, 1100, 600);
+      const body = branchStages.map((row,i)=>{
+        const bg = i%2===0 ? '#fff' : '#F1F5F9';
+        const cells = cols.map(k=>{
+          const d = (row.by[k]?.d)||0; totals[k]+=d;
+          return `<td style="padding:2px;text-align:center;color:${d>0?'#059669':(d<0?'#DC2626':'#64748B')};font-weight:600;border:1px solid #CBD5E1;background:${bg};font-size:9px">${d>0?'+':''}${fmt(d)}</td>`;
+        }).join("");
+        return `<tr><td style="padding:2px 4px;border:1px solid #CBD5E1;background:${bg};font-weight:600;color:#0F172A;font-size:9px;white-space:nowrap">${row.b}</td>${cells}</tr>`;
+      }).join("");
 
-    // Чарт для слайда 6: «Итого по статусам» (пред. vs тек.) по каждой стадии
-    const labelsS6 = (dyn.stagesS2||[]).map(x=>x.stage);
-    const prevS6   = (dyn.stagesS2||[]).map(x=>x.p);
-    const currS6   = (dyn.stagesS2||[]).map(x=>x.c);
-    const imgS6 = mkChartImage({
-      type:"bar",
-      data:{labels:labelsS6, datasets:[
-        {label:"Пред. неделя", data:prevS6, backgroundColor:"#CBD5E1", borderColor:"#94A3B8", borderWidth:1},
-        {label:"Тек. неделя",  data:currS6, backgroundColor:varGet("--rs-blue"), borderColor:varGet("--rs-blue-600"), borderWidth:1}
-      ]},
-      options: chartOpts()
-    }, 1100, 600);
+      const totalRow = `<tr style="background:#1E293B;color:#fff">
+        <td style="padding:3px 4px;border:1px solid #94A3B8;font-weight:700;font-size:9px">Итого Δ</td>
+        ${cols.map(k=>`<td style="padding:3px 2px;text-align:center;border:1px solid #94A3B8;font-weight:700;color:#fff;font-size:9px">${totals[k]>0?'+':''}${fmt(totals[k])}</td>`).join("")}
+      </tr>`;
 
-    // HTML для таблиц статусов — разобьём на два отдельных блока (матрица и итоги)
-    const stagesMatrixHTML_sorted = stageMatrixHTML("Динамика по статусам (Δ)", s2BranchStagesSorted);
-    const stagesTotalsHTML_block  = stageTotalsHTML("Итоги по статусам", dyn.stagesS2);
+      return `<table style="width:100%;border-collapse:collapse;font-size:9px;background:#fff;margin:0">
+        <thead><tr style="background:#0033A0"><th style="text-align:left;padding:2px 4px;font-weight:600;color:#fff;font-size:9px">Филиал</th>${head}</tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot>${totalRow}</tfoot>
+      </table>`;
+    };
+
+    // Компактная версия итогов для 5-го слайда
+    const compactStageTotals = (totalsArray) => {
+      return `<table style="width:100%;border-collapse:collapse;font-size:10px;background:#fff;margin:0">
+        <thead><tr style="background:#0033A0">
+          <th style="text-align:left;padding:4px 6px;font-weight:600;color:#fff;font-size:10px">Стадия</th>
+          <th style="text-align:center;padding:4px 6px;font-weight:600;color:#fff;font-size:10px">Пред.</th>
+          <th style="text-align:center;padding:4px 6px;font-weight:600;color:#fff;font-size:10px">Тек.</th>
+          <th style="text-align:center;padding:4px 6px;font-weight:600;color:#fff;font-size:10px">Δ</th>
+        </tr></thead>
+        <tbody>
+          ${totalsArray.map((r,i)=>{
+            const p=Number(r.p)||0,c=Number(r.c)||0,d=c-p;
+            const bg = i%2===0 ? '#fff' : '#F1F5F9';
+            return `<tr style="background:${bg}">
+              <td style="padding:3px 6px;border:1px solid #CBD5E1;font-weight:500;color:#0F172A;font-size:10px">${r.stage}</td>
+              <td style="padding:3px 6px;text-align:center;border:1px solid #CBD5E1;color:#1E293B;font-weight:500;font-size:10px">${fmt(p)}</td>
+              <td style="padding:3px 6px;text-align:center;border:1px solid #CBD5E1;color:#1E293B;font-weight:500;font-size:10px">${fmt(c)}</td>
+              <td style="padding:3px 6px;text-align:center;border:1px solid #CBD5E1;color:${d>0?'#059669':(d<0?'#DC2626':'#64748B')};font-weight:600;font-size:10px">${d>0?'+':''}${fmt(d)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>`;
+    };
+
+    const stagesHTML_sorted = stageMatrixHTML("Динамика по статусам (Δ)", s2BranchStagesSorted) + stageTotalsHTML("Итоги по статусам", dyn.stagesS2);
 
     const eff = (curr.p1.totals.legalized + curr.p1.totals.dismantled_ytd) - (prev.p1.totals.legalized + prev.p1.totals.dismantled_ytd);
     const rtkShare = curr.p1.totals.in_work_total ? (curr.p1.totals.rtk_in_work / curr.p1.totals.in_work_total * 100) : 0;
@@ -2210,4 +2225,261 @@ ${planfactHTML}
     }
     
     /* Цвета для значений в матрице статусов */
-   
+    .positive-cell{color:#059669;font-weight:700}
+    .negative-cell{color:#dc2626;font-weight:700}
+    .neutral-cell{color:#64748b}
+    
+    /* Scrollbar для 5-го слайда */
+    .slide div[style*="overflow:auto"]::-webkit-scrollbar{
+      width:8px;
+    }
+    
+    .slide div[style*="overflow:auto"]::-webkit-scrollbar-track{
+      background:#f1f5f9;
+      border-radius:4px;
+    }
+    
+    .slide div[style*="overflow:auto"]::-webkit-scrollbar-thumb{
+      background:#94a3b8;
+      border-radius:4px;
+    }
+    
+    .slide div[style*="overflow:auto"]::-webkit-scrollbar-thumb:hover{
+      background:#64748b;
+    }
+    
+    @media print{
+      body{background:#fff}
+      .slides-container{padding:0;gap:0}
+      .slide{box-shadow:none;margin-bottom:0;page-break-after:always;page-break-inside:avoid}
+      .slide-no{background:#333}
+      /* Убираем прокрутку для печати */
+      .slide div[style*="overflow:auto"]{overflow:visible !important;max-height:none !important}
+    }
+  </style>
+</head>
+<body>
+  <div class="slides-container">
+    <!-- Слайд 1: Заголовок и План-Факт -->
+    <div class="slide">
+      <div class="rosseti-logo"></div>
+      <h1>Выполнение плановых показателей БП<br>по размещению ВОЛС на ВЛ</h1>
+      <div class="subline">АО «Россети Кубань» • Период: ${prev.date} — ${curr.date}</div>
+      
+      <div style="margin-top:40px">
+        ${planfactHTML}
+      </div>
+      
+      <div class="kpi-grid" style="margin-top:60px">
+        <div class="kpi-card">
+          <div class="kpi-label">В работе всего</div>
+          <div class="kpi-value">${fmt(curr.p1.totals.in_work_total)}</div>
+          <div class="kpi-delta ${dyn.in_work_total>0?'positive':(dyn.in_work_total<0?'negative':'neutral')}">
+            ${dyn.in_work_total>0?'↑':dyn.in_work_total<0?'↓':'→'} ${sign(dyn.in_work_total)}${fmt(dyn.in_work_total)}
+          </div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Выявлено за неделю</div>
+          <div class="kpi-value">${fmt(dyn.found_week)}</div>
+          <div class="kpi-delta ${dyn.found_week>0?'positive':'neutral'}">
+            ${dyn.found_week>0?'↑':'→'} ${sign(dyn.found_week)}${fmt(dyn.found_week)}
+          </div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Закрыто за неделю</div>
+          <div class="kpi-value">${fmt(eff)}</div>
+          <div class="kpi-delta ${eff>0?'positive':'neutral'}">
+            ${eff>0?'↑':'→'} ${sign(eff)}${fmt(eff)}
+          </div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">ПАО «Ростелеком»</div>
+          <div class="kpi-value">${fmt(curr.p1.totals.rtk_in_work)}</div>
+          <div class="kpi-delta ${dyn.rtk_in_work>0?'positive':(dyn.rtk_in_work<0?'negative':'neutral')}">
+            ${dyn.rtk_in_work>0?'↑':dyn.rtk_in_work<0?'↓':'→'} ${sign(dyn.rtk_in_work)}${fmt(dyn.rtk_in_work)} • ${rtkShare.toFixed(1)}%
+          </div>
+        </div>
+      </div>
+      
+      <div class="slide-no">1</div>
+    </div>
+
+    <!-- Слайд 2: Динамика по филиалам (всего) -->
+    <div class="slide">
+      <div class="rosseti-logo"></div>
+      <h2>Динамика выявления бездоговорного размещения ВОЛС<br>в разрезе филиалов ЭС (итого)</h2>
+      <div class="grid2">
+        <div class="imgbox">
+          <img src="${imgS2}" alt="График по филиалам (всего)"/>
+        </div>
+        <div class="panel">
+          ${tblS2HTML_sorted}
+        </div>
+      </div>
+      <div class="slide-no">2</div>
+    </div>
+
+    <!-- Слайд 3: Приказ №425 -->
+    <div class="slide">
+      <div class="rosseti-logo"></div>
+      <h2>Динамика по Приказу №425</h2>
+      <div class="subline">Выполнение показателей в разрезе филиалов</div>
+      <div class="grid2">
+        <div class="imgbox">
+          <img src="${imgS3}" alt="График по Приказу 425"/>
+        </div>
+        <div class="panel">
+          ${tblS3HTML_sorted}
+        </div>
+      </div>
+      <div class="slide-no">3</div>
+    </div>
+
+    <!-- Слайд 4: ПАО «Ростелеком» -->
+    <div class="slide">
+      <div class="rosseti-logo"></div>
+      <h2>Динамика по ПАО «Ростелеком»</h2>
+      <div class="subline">Детализация по филиалам электрических сетей</div>
+      <div class="grid2">
+        <div class="imgbox">
+          <img src="${imgS4}" alt="График по ПАО Ростелеком"/>
+        </div>
+        <div class="panel">
+          ${tblS4HTML_sorted}
+        </div>
+      </div>
+      <div class="slide-no">4</div>
+    </div>
+
+    <!-- Слайд 5: Динамика по статусам -->
+    <div class="slide">
+      <div class="rosseti-logo"></div>
+      <h2 style="font-size:28px;margin-bottom:12px">Динамика по статусам работ</h2>
+      <div style="height:calc(100% - 100px);overflow:auto;padding:5px">>
+        ${stagesHTML_sorted}
+      </div>
+      <div class="slide-no">5</div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    const blob = new Blob([presHTML], {type: 'text/html; charset=utf-8'});
+    triggerDownload(blob, `Презентация_ВОЛС_${curr.date.replace(/\./g,'-')}.html`);
+    document.getElementById("exportStatus").textContent = "✅ HTML презентация сохранена";
+    document.getElementById("exportStatus").style.display = "inline-block";
+    setTimeout(()=>document.getElementById("exportStatus").style.display = "none", 3000);
+  }
+
+  /* ==================== Вспомогательные ==================== */
+  function triggerDownload(blob, filename){
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
+  }
+  function varGet(name){
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#0033A0";
+  }
+
+  /* ==================== Инициализация ==================== */
+  let DATA = null;
+
+  document.getElementById("btnParse").addEventListener("click", async () => {
+    const fPrev = document.getElementById("filePrev").files[0];
+    const fCurr = document.getElementById("fileCurr").files[0];
+    if(!fPrev || !fCurr){ 
+      document.getElementById("errorMsg").textContent = "Загрузите оба PDF: предыдущий и текущий."; 
+      document.getElementById("errorMsg").style.display = "inline-block";
+      return; 
+    }
+
+    try{
+      document.getElementById("loadingMsg").style.display = "inline-flex";
+      document.getElementById("errorMsg").textContent = "";
+      document.getElementById("errorMsg").style.display = "none";
+
+      const [pPrev, pCurr] = await Promise.all([pdfToPages(fPrev), pdfToPages(fCurr)]);
+      const prev = parseReportByPages(pPrev);
+      const curr = parseReportByPages(pCurr);
+      const dyn = computeDynamics(curr, prev);
+      DATA = {prev, curr, dyn};
+
+      document.getElementById("dates").textContent = `📅 Предыдущий: ${prev.date} · Текущий: ${curr.date}`;
+      renderKpis(curr, prev, dyn);
+      renderBranchesTable(dyn.branchRows, "#tblBranches tbody", "sumPrev", "sumCurr", "sumDelta");
+      renderBranchesTable(dyn.branchRowsS3, "#tblBranchesS3 tbody", "sumPrevS3", "sumCurrS3", "sumDeltaS3");
+      renderBranchesTable(dyn.branchRowsS4, "#tblBranchesS4 tbody", "sumPrevS4", "sumCurrS4", "sumDeltaS4");
+      renderCharts(curr, prev, dyn);
+      renderStagesTables(dyn);
+      buildPresentationHTML(curr, prev, dyn);
+      document.getElementById("briefDates").textContent = `Предыдущий: ${prev.date} · Текущий: ${curr.date}`;
+      buildSummaryBlocks(curr, prev, dyn);
+      await injectPlanFactHTML();
+
+      document.getElementById("loadingMsg").style.display = "none";
+      
+      // Анимация появления карточек
+      document.querySelectorAll('.card').forEach((card, i) => {
+        card.style.opacity = '0';
+        card.style.transform = 'translateY(20px)';
+        setTimeout(() => {
+          card.style.transition = 'all 0.5s ease-out';
+          card.style.opacity = '1';
+          card.style.transform = 'translateY(0)';
+        }, i * 100);
+      });
+      
+    }catch(e){
+      console.error(e);
+      document.getElementById("loadingMsg").style.display = "none";
+      document.getElementById("errorMsg").textContent = "❌ Ошибка разбора PDF. Проверьте формат отчётов.";
+      document.getElementById("errorMsg").style.display = "inline-block";
+    }
+  });
+
+  document.getElementById("exportPresPDF").addEventListener("click", async () => {
+    if(!DATA) return alert("Сначала проанализируйте отчёты.");
+    await exportPresPDF();
+  });
+  document.getElementById("exportBriefPDF").addEventListener("click", async () => {
+    if(!DATA) return alert("Сначала проанализируйте отчёты.");
+    await exportBriefPDF();
+  });
+  document.getElementById("exportWordHTML").addEventListener("click", () => {
+    exportWordHTML();
+  });
+  document.getElementById("exportPresHTML").addEventListener("click", () => {
+    exportPresHTML();
+  });
+
+  /* Компактный режим */
+  document.getElementById("btnCompact").addEventListener("click", ()=>{
+    document.body.classList.toggle("compact");
+    const btn = document.getElementById("btnCompact");
+    if(document.body.classList.contains("compact")){
+      btn.innerHTML = "🔍 Обычный";
+    } else {
+      btn.innerHTML = "⚡ Компакт";
+    }
+  });
+  
+  /* Подсветка активной секции при прокрутке */
+  window.addEventListener('scroll', () => {
+    const sections = document.querySelectorAll('.card');
+    const scrollPos = window.scrollY + 100;
+    
+    sections.forEach(section => {
+      const top = section.offsetTop;
+      const height = section.offsetHeight;
+      
+      if (scrollPos >= top && scrollPos < top + height) {
+        section.style.borderColor = 'var(--rs-accent)';
+      } else {
+        section.style.borderColor = 'var(--border-light)';
+      }
+    });
+  });
+  </script>
+</body>
+</html>
